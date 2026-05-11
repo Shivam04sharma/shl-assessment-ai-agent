@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SHL Assessment Agent</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .container { width: 100%; max-width: 780px; height: 90vh; display: flex; flex-direction: column; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.1); overflow: hidden; }
+    .header { background: #c8102e; color: white; padding: 16px 24px; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+    .header span { font-size: 13px; font-weight: 400; opacity: 0.85; }
+    .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 75%; padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; }
+    .msg.user { align-self: flex-end; background: #c8102e; color: white; border-bottom-right-radius: 4px; }
+    .msg.assistant { align-self: flex-start; background: #f1f3f5; color: #222; border-bottom-left-radius: 4px; }
+    .recommendations { margin-top: 4px; display: flex; flex-direction: column; gap: 6px; }
+    .rec-item { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 14px; font-size: 13px; }
+    .rec-item a { color: #c8102e; text-decoration: none; font-weight: 600; }
+    .rec-item a:hover { text-decoration: underline; }
+    .rec-badge { display: inline-block; color: white; font-size: 11px; padding: 2px 7px; border-radius: 10px; margin-left: 8px; }
+    .rec-badge.K { background: #2563eb; }
+    .rec-badge.P { background: #7c3aed; }
+    .rec-badge.A { background: #059669; }
+    .rec-badge.B { background: #d97706; }
+    .rec-badge.S { background: #dc2626; }
+    .rec-badge.C { background: #0891b2; }
+    .rec-badge.M { background: #65a30d; }
+    .input-area { display: flex; padding: 14px 16px; border-top: 1px solid #eee; gap: 10px; }
+    .input-area input { flex: 1; padding: 10px 16px; border: 1px solid #ddd; border-radius: 24px; font-size: 14px; outline: none; }
+    .input-area input:focus { border-color: #c8102e; }
+    .input-area button { background: #c8102e; color: white; border: none; border-radius: 24px; padding: 10px 22px; font-size: 14px; cursor: pointer; }
+    .input-area button:hover { background: #a00d24; }
+    .input-area button:disabled { background: #ccc; cursor: not-allowed; }
+    .typing { align-self: flex-start; background: #f1f3f5; padding: 12px 16px; border-radius: 12px; font-size: 13px; color: #888; }
+    .new-chat { background: transparent; border: 1px solid rgba(255,255,255,0.6); color: white; padding: 5px 14px; border-radius: 20px; font-size: 12px; cursor: pointer; margin-left: auto; }
+    .new-chat:hover { background: rgba(255,255,255,0.15); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    SHL Assessment Agent
+    <span>Powered by Gemini + FAISS</span>
+    <button class="new-chat" onclick="newChat()">+ New Chat</button>
+  </div>
+  <div class="messages" id="messages">
+    <div class="msg assistant">Hi! I help hiring managers find the right SHL assessments. Tell me about the role you're hiring for.</div>
+  </div>
+  <div class="input-area">
+    <input type="text" id="userInput" placeholder="e.g. I am hiring a senior Java developer..." onkeydown="if(event.key==='Enter') sendMessage()" />
+    <button id="sendBtn" onclick="sendMessage()">Send</button>
+  </div>
+</div>
+
+<script>
+  let messages = [];
+
+  function newChat() {
+    messages = [];
+    const container = document.getElementById('messages');
+    container.innerHTML = '<div class="msg assistant">Hi! I help hiring managers find the right SHL assessments. Tell me about the role you\'re hiring for.</div>';
+    document.getElementById('userInput').disabled = false;
+    document.getElementById('userInput').placeholder = 'e.g. I am hiring a senior Java developer...';
+    document.getElementById('sendBtn').disabled = false;
+  }
+
+  async function sendMessage() {
+    const input = document.getElementById('userInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    appendMessage('user', text);
+    messages.push({ role: 'user', content: text });
+
+    const btn = document.getElementById('sendBtn');
+    btn.disabled = true;
+    input.disabled = true;
+
+    const typing = document.createElement('div');
+    typing.className = 'typing';
+    typing.id = 'typing';
+    typing.textContent = 'Thinking...';
+    document.getElementById('messages').appendChild(typing);
+    scrollBottom();
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages })
+      });
+      const data = await res.json();
+
+      document.getElementById('typing')?.remove();
+      appendAssistantMessage(data);
+      messages.push({ role: 'assistant', content: data.reply });
+
+      if (data.end_of_conversation) {
+        input.disabled = true;
+        btn.disabled = true;
+        input.placeholder = 'Conversation ended. Click + New Chat to start again.';
+      } else {
+        input.disabled = false;
+        btn.disabled = false;
+        input.focus();
+      }
+    } catch (e) {
+      document.getElementById('typing')?.remove();
+      appendMessage('assistant', 'Error connecting to server. Is Docker running?');
+      input.disabled = false;
+      btn.disabled = false;
+    }
+
+    scrollBottom();
+  }
+
+  function appendMessage(role, text) {
+    const div = document.createElement('div');
+    div.className = `msg ${role}`;
+    div.textContent = text;
+    document.getElementById('messages').appendChild(div);
+    scrollBottom();
+  }
+
+  function appendAssistantMessage(data) {
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-self:flex-start;max-width:85%';
+
+    const msg = document.createElement('div');
+    msg.className = 'msg assistant';
+    msg.textContent = data.reply;
+    wrapper.appendChild(msg);
+
+    if (data.recommendations && data.recommendations.length > 0) {
+      const recDiv = document.createElement('div');
+      recDiv.className = 'recommendations';
+      data.recommendations.forEach((r, i) => {
+        const item = document.createElement('div');
+        item.className = 'rec-item';
+        item.innerHTML = `<strong>${i+1}.</strong> <a href="${r.url}" target="_blank">${r.name}</a><span class="rec-badge ${r.test_type}" title="${getTestTypeLabel(r.test_type)}">${r.test_type}</span>`;
+        recDiv.appendChild(item);
+      });
+      wrapper.appendChild(recDiv);
+    }
+
+    document.getElementById('messages').appendChild(wrapper);
+    scrollBottom();
+  }
+
+  function getTestTypeLabel(t) {
+    const map = { K: 'Knowledge', P: 'Personality', A: 'Ability', B: 'Behavior/SJT', S: 'Skill', C: 'Competency', M: 'Motivation' };
+    return map[t] || t;
+  }
+
+  function scrollBottom() {
+    const m = document.getElementById('messages');
+    m.scrollTop = m.scrollHeight;
+  }
+</script>
+</body>
+</html>
